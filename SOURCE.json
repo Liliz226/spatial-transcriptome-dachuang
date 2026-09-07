@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/JinmiaoChenLab/scTM",
+  "commit": "0099ab268c712c91f398a2862db59b1dc793f69b",
+  "excluded": [
+    "data/simulation.h5ad"
+  ],
+  "method": "GitHub Git Trees + Git Blobs API; SHA-1 verified",
+  "files": 34
+}

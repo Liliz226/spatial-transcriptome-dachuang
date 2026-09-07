@@ -1,0 +1,55 @@
+# scTM 代码复现与认证说明
+
+## 源码来源
+- 上游：https://github.com/JinmiaoChenLab/scTM
+- 固定提交：0099ab268c712c91f398a2862db59b1dc793f69b
+- `scTM/` 为该提交的 34 个原始文件，通过 GitHub API 获取并逐一验证 Git blob SHA-1；不是 git clone 工作树。
+- 按要求跳过 `data/simulation.h5ad`，保留全部教程 notebook（其中有上游已有输出）。
+- `python verify_source.py` 可再次检查源码完整性。
+
+## 环境与验证
+在 CODE 目录运行：
+```powershell
+uv venv .venv --python 3.8 --cache-dir .uv-cache
+uv pip install --python .venv/Scripts/python.exe --cache-dir .uv-cache -c constraints.txt -e scTM
+.venv/Scripts/python.exe smoke_test.py
+```
+`constraints.txt` 是本地兼容约束，不是作者的完整锁文件。作者的 `pdm.lock` 原样保留。默认使用 CPU 做小型合成计数矩阵验证；这不是论文实验结果复现。测试通过时会生成 `outputs/smoke/result.json` 和两个主题矩阵 CSV。
+
+## 组件与调用流程
+这不是带 HTTP 登录接口的 Web 服务，而是本地 Python 科学计算包。
+
+1. `sctm/pp.py`：过滤细胞和基因，选择高变基因。
+2. 教程通过 `squidpy.gr.spatial_neighbors` 生成 `adata.obsp['spatial_connectivities']`。
+3. `sctm/stamp.py:35` 的 `STAMP` 接收 AnnData、计数层和主题数；`setup` 读取计数及空间邻接图并准备图卷积特征。
+4. `sctm/data.py` 包装张量数据；`sctm/model.py` 的 `spatialLDAModel` 定义 Pyro 概率模型及变分分布，`sctm/layers.py` 提供编码器。
+5. `STAMP.train` 用 DataLoader 分批，调用 Pyro SVI 优化 ELBO；设备默认 cuda:0，因此无 GPU 时应明确传入 device='cpu'。
+6. `get_cell_by_topic` 返回细胞×主题矩阵，`get_feature_by_topic` 返回基因×主题矩阵，`metrics.py`、`pl.py`、`analysis.py` 分别负责评价、绘图及富集分析。
+
+这里的“请求流”是 Python 函数调用：AnnData → STAMP.setup → 空间特征 → SVI 训练 → 主题矩阵 → 下游分析，没有认证中间件或用户会话。
+
+## 凭据、令牌和外部调用
+- 检查该提交的包源码、项目配置和文档后，未发现应用账号密码、OAuth、JWT、API key 校验、会话管理或令牌刷新实现；本地 STAMP 训练不要求登录。
+- `sctm/analysis.py:6` 调用 `gseapy.get_library_name`；`:13` 的 `get_topic_enrichr` 挑选主题的 top genes，转为大写并交给 `gseapy.enrichr`。在线请求由依赖库负责，此封装不接收或存储凭据；在线富集会将所选基因列表交给外部服务。`:74` 的 DISCO 分析委托给 `discotoolkit.CELLiD_enrichment`。依赖库内部的联网与认证实现不属于本仓库，不能从这个封装推断其全部行为。
+- `sctm/stamp.py:626` 的 save/load 保存和恢复 Pyro 参数存储，它们保存的是模型参数，不是访问令牌；也没有把完整 AnnData 和训练配置打包为可自动恢复的模型对象。
+- `.github/workflows/ci.yml` 是文档部署流水线：push main/master → checkout → PDM 安装 → mkdocs gh-deploy --force。它声明 contents: write，未显式定义个人 PAT 或登录 API。根据 checkout 的常规机制，部署凭据来自 GitHub Actions 执行环境；具体运行时令牌由 GitHub 管理，仓库代码没有生成、刷新或保存业务令牌的逻辑。
+- 下载脚本使用公开 GitHub API，未传入认证头、个人令牌或账户凭据。
+
+## 后续真实数据复现
+从 `scTM/docs/notebooks/stamp/Simulation.ipynb` 开始。该 notebook 读取 `adata.h5ad`，而 README 指向 `data/simulation.h5ad`，需在准备数据后统一路径。输入应包含原始计数层 `counts` 和空间坐标 `obsm['spatial']`。本次不下载真实数据、不执行 notebook 中的长训练。另有 `get_perplexity` 在源码中硬编码 cuda:0，CPU 使用该辅助方法前需要单独修正并验证；当前冒烟测试不调用它。
+
+真实数据准备好后，可在 CODE 中运行：
+```powershell
+.venv/Scripts/python.exe run_stamp.py path/to/data.h5ad --topics 5 --epochs 800 --device cpu
+```
+如需 GPU，另行安装与本机 CUDA 匹配的 PyTorch，并传入 `--device cuda:0`。本次环境用于 CPU 验证。
+
+## 本次验证结果（2026-09-07）
+- Python 3.8.20；102 个已安装包；依赖一致性检查通过。
+- 合成数据测试通过：64 cells × 32 genes，2 topics，CPU 训练 3 epochs，loss 86.197 → 85.046 → 84.675。
+- 细胞主题矩阵 (64, 2)、基因主题矩阵 (32, 2)；有限值与细胞主题比例归一化检查通过。
+- `run_stamp.py --help` 成功，包含 Squidpy 的实际导入。
+- 固定 GSEApy 1.0.4，解决新版 1.1.13 在 Python 3.8 下导入错误；解析采用 Squidpy 1.2.2。
+- 最终版本在 `requirements-lock.txt`，可用 `uv pip install --python .venv/Scripts/python.exe --cache-dir .uv-cache -r requirements-lock.txt -e scTM` 重建。
+- Pyro 对冻结参数有一条 UserWarning，不影响本次测试通过。
+- 未下载数据集，未运行真实数据实验；这些结果只证明代码主训练路径可运行。
