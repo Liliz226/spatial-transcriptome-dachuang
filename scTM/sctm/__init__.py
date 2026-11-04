@@ -4,6 +4,16 @@ __author__ = """Zhong Chengwei"""
 __email__ = "chengwei8@gmail.com"
 __version__ = "0.1.0"
 
-from . import analysis, metrics, pl, pp, seed, stamp, utils
+from . import analysis, export, metrics, pl, pp, seed, spatial_weights, stamp, utils
 
-__all__ = ["pl", "pp", "analysis", "stamp", "utils", "metrics", "seed"]
+__all__ = [
+    "pl",
+    "pp",
+    "analysis",
+    "stamp",
+    "utils",
+    "metrics",
+    "seed",
+    "export",
+    "spatial_weights",
+]

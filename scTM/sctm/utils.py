@@ -3,7 +3,8 @@ import math
 import numpy as np
 import pandas as pd
 import torch
-from scipy.sparse import csr_matrix, diags, identity, issparse
+from scipy.sparse import csr_matrix, diags, identity, issparse, isspmatrix_csr
+import scipy.sparse as sparse
 
 
 def densify(adata, layer):
@@ -35,6 +36,13 @@ def sparsify(adata, layer):
 
 
 def get_init_bg(data):
+    # Sparse storage mode keeps `x` as a scipy CSR matrix (or torch sparse
+    # tensor); densify locally so the elementwise normalisation and
+    # `torch.mean` keep working unchanged.
+    if sparse.issparse(data):
+        data = torch.from_numpy(data.toarray())
+    elif data.is_sparse:
+        data = data.to_dense()
     data = data / data.sum(axis=1, keepdims=True)
     # data = np.log(data)
     means = torch.mean(data, axis=0)
@@ -58,6 +66,13 @@ def precompute_SGC_scipy(x, adj, n_layers, mode="sign", add_diag=True, csr=True)
     adj = make_sparse_tensor(adj)
 
     assert x is not None
+    # Sparse storage mode passes `x` as a scipy CSR matrix (or torch sparse
+    # tensor). Densify locally so the SGC feature stack keeps working; the
+    # dense path is untouched.
+    if isspmatrix_csr(x):
+        x = torch.from_numpy(x.toarray())
+    elif x.is_sparse:
+        x = x.to_dense()
     # xs = x
     ls = x.sum(dim=1, keepdims=True)
     ms = torch.median(x.sum(axis=1))

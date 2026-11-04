@@ -1,0 +1,12 @@
+{
+  "spatial_weight": {
+    "method": "binary",
+    "gaussian_sigma": 1.0,
+    "cosine_layer": null,
+    "combined_alpha": 0.5
+  },
+  "engineering": {
+    "use_amp": false,
+    "sparse_storage": false
+  }
+}

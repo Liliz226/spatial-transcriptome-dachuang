@@ -23,6 +23,7 @@ from .data import DictDataset
 # from .data import RandomNodeSampler
 from .metrics import get_metrics
 from .model import spatialLDAModel
+from .spatial_weights import build_spatial_weights
 from .utils import (
     get_init_bg,
     make_sparse_tensor,
@@ -49,6 +50,10 @@ class STAMP:
         gene_likelihood="nb",
         mode="sign",
         verbose=False,
+        spatial_weight="binary",
+        spatial_weight_kwargs=None,
+        use_amp=False,
+        sparse_storage=False,
     ):
         """Initialize model
 
@@ -70,10 +75,22 @@ class STAMP:
                 multivariate normal. Defaults to "mvn".
             mode (str, optional): sign vs sgc(simplified graph convolutions).
             sgc leads to smoother topics. Defaults to "sign".
-            beta (float, optional): Beta as in Beta-VAE. Defaults to 1.
+            spatial_weight (str, optional): Adjacency weighting scheme. Choices are
+                "binary" (original), "gaussian", "cosine", "combined". Defaults to
+                "binary" = upstream behaviour.
+            spatial_weight_kwargs (dict, optional): Extra args for the weighting
+                scheme (sigma, layer, alpha). See ``sctm.spatial_weights``.
+            use_amp (bool, optional): Enable autocast mixed precision during
+                training. Defaults to False.
+            sparse_storage (bool, optional): Keep the counts matrix as a sparse
+                COO tensor and materialize rows lazily per batch. Defaults to False.
         """
         pyro.clear_param_store()
 
+        self.spatial_weight = spatial_weight
+        self.spatial_weight_kwargs = spatial_weight_kwargs or {}
+        self.use_amp = use_amp
+        self.sparse_storage = sparse_storage
         self.time_covariate_keys = time_covariate_keys
         self.continous_covariate_keys = continous_covariate_keys
         self.categorical_covariate_keys = categorical_covariate_keys
@@ -158,7 +175,13 @@ class STAMP:
 
     def setup(self, adata, layer, categorical_covariate_keys, continous_covariate_keys):
         x = sparsify(adata, layer)
-        self.x = make_sparse_tensor(x).to_dense()
+        # Sparse storage mode keeps the counts matrix as a scipy CSR matrix;
+        # rows are materialized lazily in ``DictDataset.__getitem__``. The dense
+        # path (default) preserves upstream behaviour exactly.
+        if self.sparse_storage:
+            self.x = x.tocsr()
+        else:
+            self.x = make_sparse_tensor(x).to_dense()
 
         # create a dataframe to track
         self.df = self.adata.obs.copy()
@@ -167,7 +190,9 @@ class STAMP:
             if "spatial_connectivities" not in adata.obsp:
                 raise KeyError("spatial_connectivities not found")
 
-            self.adj = adata.obsp["spatial_connectivities"]
+            self.adj = build_spatial_weights(
+                adata, method=self.spatial_weight, **self.spatial_weight_kwargs
+            )
 
         self.n_batches = 0
         self.n_time = 0
@@ -271,6 +296,7 @@ class STAMP:
         patience=20,
         shuffle=True,
         num_particles=1,
+        use_amp=None,
     ):
         """Training the data
 
@@ -287,7 +313,13 @@ class STAMP:
                  Defaults to True.
             patience (int, optional): How many epochs to stop training when
                 training plateau. Defaults to 20.
+            use_amp (bool, optional): Enable autocast mixed precision. Defaults
+                to None (falls back to ``self.use_amp``). Only the forward pass
+                is autocast; Pyro's SVI drives the optimizer step internally so
+                ``GradScaler`` is not applied.
         """
+        if use_amp is None:
+            use_amp = self.use_amp
 
         # adam_args = {"lr":learning_rate, "weight_decay":weight_decay, "clip_norm": 1}
         # optimizer = ClippedAdam(adam_args)
@@ -351,6 +383,15 @@ class STAMP:
         self.device = device
         self.model = self.model.to(device)
 
+        # Autocast mixed precision is a GPU technique (fp16). The model uses
+        # in-place fp32 accumulator writes (``mean[indices] = ...``) that break
+        # under CPU bfloat16, and this torch build has no bf16 kernels, so CPU
+        # autocast would be slower rather than faster. Hence AMP only activates
+        # on CUDA; on CPU it is a documented no-op.
+        amp_dtype = None
+        if use_amp and device.startswith("cuda"):
+            amp_dtype = torch.float16
+
         avg_loss = np.Inf
 
         if early_stop:
@@ -377,19 +418,38 @@ class STAMP:
             losses = []
             # optimizer.zero_grad()
             for _, batch in enumerate(self.dataloader):
-                batch_loss = svi.step(
-                    batch["x"].to(device),
-                    batch["sgc_x"].to(device),
-                    batch["categorical_covariate_codes"].to(device),
-                    (
-                        batch["time_covariate_codes"].to(device)
-                        if self.n_time >= 2
-                        else None
-                    ),
-                    not_cov,
-                    batch["sample_idx"],
-                    True,
+                batch_x = batch["x"].to(device)
+                batch_sgc_x = batch["sgc_x"].to(device)
+                batch_cat = batch["categorical_covariate_codes"].to(device)
+                batch_time = (
+                    batch["time_covariate_codes"].to(device)
+                    if self.n_time >= 2
+                    else None
                 )
+                if amp_dtype is not None:
+                    with torch.autocast(
+                        device_type="cuda" if device.startswith("cuda") else "cpu",
+                        dtype=amp_dtype,
+                    ):
+                        batch_loss = svi.step(
+                            batch_x,
+                            batch_sgc_x,
+                            batch_cat,
+                            batch_time,
+                            not_cov,
+                            batch["sample_idx"],
+                            True,
+                        )
+                else:
+                    batch_loss = svi.step(
+                        batch_x,
+                        batch_sgc_x,
+                        batch_cat,
+                        batch_time,
+                        not_cov,
+                        batch["sample_idx"],
+                        True,
+                    )
                 losses.append(float(batch_loss))
                 # iteration += 1
                 # print(f"Full time{end - start}
@@ -480,7 +540,7 @@ class STAMP:
             dataset, batch_size=batch_size, drop_last=False, shuffle=False
         )
 
-        self.model = self.model.to("cuda:0")
+        self.model = self.model.to(device)
         loss = 0
         with torch.no_grad():
             for _, batch in enumerate(dataloader):

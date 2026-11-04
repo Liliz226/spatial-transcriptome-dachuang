@@ -1,3 +1,6 @@
+import numpy as np
+import torch
+from scipy import sparse
 from torch.utils.data import Dataset
 
 
@@ -15,6 +18,19 @@ class DictDataset(Dataset):
 
     def __getitem__(self, index):
         item = {self.idx_key: index}
+        scalar = np.isscalar(index)
         for k, v in self.tensor_dict.items():
-            item[k] = v[index]
+            val = v[index]
+            # Sparse storage mode keeps `x` as a scipy CSR matrix (or torch
+            # sparse tensor). Array subsets stay sparse so the train/test split
+            # does not materialize the full dense matrix; single rows (scalar
+            # index, i.e. the per-batch DataLoader path) are densified here so
+            # every downstream consumer receives a dense batch.
+            if sparse.issparse(val):
+                if scalar:
+                    val = torch.from_numpy(val.toarray().ravel())
+            elif torch.is_tensor(val) and val.is_sparse:
+                if scalar:
+                    val = val.to_dense()
+            item[k] = val
         return item
