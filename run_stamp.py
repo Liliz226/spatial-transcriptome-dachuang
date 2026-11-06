@@ -13,6 +13,10 @@ parser.add_argument('--topics', type=int, default=5)
 parser.add_argument('--epochs', type=int, default=800)
 parser.add_argument('--layer', default='counts')
 parser.add_argument('--device', default='cpu')
+parser.add_argument('--batch-size', type=int, default=1296,
+                    help='Batch size (default 1296 = upstream Simulation config).')
+parser.add_argument('--learning-rate', type=float, default=0.01,
+                    help='AdamW learning rate (default 0.01 = upstream).')
 parser.add_argument('--output', type=Path, default=Path(__file__).resolve().parent/'outputs'/'stamp')
 parser.add_argument('--config', type=Path, default=None,
                     help='Optional JSON config file (see config.json). CLI args override it.')
@@ -72,7 +76,13 @@ model = sctm.stamp.STAMP(
     use_amp=use_amp,
     sparse_storage=sparse_storage,
 )
-model.train(max_epochs=args.epochs, min_epochs=args.epochs, device=args.device)
+model.train(
+    max_epochs=args.epochs,
+    min_epochs=args.epochs,
+    device=args.device,
+    batch_size=args.batch_size,
+    learning_rate=args.learning_rate,
+)
 
 args.output.mkdir(parents=True, exist_ok=True)
 model.get_cell_by_topic().to_csv(args.output/'cell_topic.csv')
