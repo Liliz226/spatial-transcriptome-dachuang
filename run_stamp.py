@@ -104,6 +104,8 @@ if args.evaluate:
         device=args.device, dataset='train',
         num_particles=args.perplexity_particles,
     ))
+    # Normalise numpy scalars (float32 etc.) into JSON-serializable Python types.
+    metrics = {k: float(v) for k, v in metrics.items()}
     metrics["Perplexity"] = perplexity
     (args.output/'metrics.json').write_text(json.dumps(metrics, indent=2))
     print('Metrics:', json.dumps(metrics, indent=2))
