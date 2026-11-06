@@ -29,6 +29,12 @@ parser.add_argument('--sparse-storage', action='store_true', default=None,
                     help='Keep counts as sparse tensor (overrides config).')
 parser.add_argument('--top-genes', type=int, default=50,
                     help='Top genes per topic in the exported viz modules.')
+parser.add_argument('--evaluate', action='store_true',
+                    help='After training, compute module metrics + perplexity, save to metrics.json.')
+parser.add_argument('--topk', type=int, default=20,
+                    help='Top-K genes used when scoring module metrics.')
+parser.add_argument('--perplexity-particles', type=int, default=50,
+                    help='Particles for the perplexity ELBO estimate (lower = faster).')
 args = parser.parse_args()
 
 if not args.input.is_file():
@@ -85,8 +91,21 @@ model.train(
 )
 
 args.output.mkdir(parents=True, exist_ok=True)
-model.get_cell_by_topic().to_csv(args.output/'cell_topic.csv')
-model.get_feature_by_topic().to_csv(args.output/'gene_topic.csv')
+cell_topic = model.get_cell_by_topic()
+gene_topic = model.get_feature_by_topic()
+cell_topic.to_csv(args.output/'cell_topic.csv')
+gene_topic.to_csv(args.output/'gene_topic.csv')
 model.save(str(args.output/'pyro_params.pt'))
 viz_path = sctm.export.export_viz_data(model, args.output, top_genes=args.top_genes, layer=args.layer)
+
+if args.evaluate:
+    metrics = model.get_metrics(topk=args.topk, layer=args.layer)
+    perplexity = float(model.get_perplexity(
+        device=args.device, dataset='train',
+        num_particles=args.perplexity_particles,
+    ))
+    metrics["Perplexity"] = perplexity
+    (args.output/'metrics.json').write_text(json.dumps(metrics, indent=2))
+    print('Metrics:', json.dumps(metrics, indent=2))
+
 print('Results saved to', args.output, '(viz:', viz_path.name + ')')
