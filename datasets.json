@@ -1,27 +1,34 @@
 {
-  "Lung5-3": {
-    "path": "/root/autodl-tmp/stamp/STAMP/Reproducibility/ProcessedData/SMI_Lung/Lung5-3.h5ad",
-    "n_topics": 15,
-    "layer": null,
-    "use_highly_variable": true,
-    "n_neighs": null,
-    "gaussian_sigma": 1.0
-  },
   "Visium_Mousebrain": {
-    "path": "/root/autodl-tmp/stamp/STAMP/Reproducibility/ProcessedData/Visium_Mousebrain/adata_benchmark.h5ad",
-    "n_topics": 20,
-    "layer": null,
-    "copy_x_to_layer": "counts",
+    "path": "/root/autodl-tmp/stamp/Reproducibility/ProcessedData/Visium_Mousebrain/adata_benchmark.h5ad",
+    "n_topics": 35,
+    "layer": "counts",
     "use_highly_variable": true,
     "categorical_covariate_keys": ["data"],
     "gaussian_sigma": 1.0
   },
   "Stereo_MOB": {
-    "path": "/root/autodl-tmp/stamp/STAMP/Reproducibility/ProcessedData/Stereo_MOB/adata_processed.h5ad",
+    "path": "/root/autodl-tmp/stamp/Reproducibility/ProcessedData/Stereo_MOB/adata_processed.h5ad",
     "n_topics": 12,
     "layer": "count",
     "use_highly_variable": true,
     "categorical_covariate_keys": ["batch"],
+    "gaussian_sigma": 1.0
+  },
+  "Stereo_embryo": {
+    "path": "/root/autodl-tmp/stamp/Reproducibility/ProcessedData/Stereo_embryo/adata_clean.h5ad",
+    "n_topics": 40,
+    "layer": "count",
+    "use_highly_variable": true,
+    "time_covariate_keys": "time",
+    "gaussian_sigma": 1.0
+  },
+  "Visium_DLPFC": {
+    "path": "/root/autodl-tmp/stamp/Reproducibility/ProcessedData/Visium_DLPFC/adata.h5ad",
+    "n_topics": 10,
+    "layer": "counts",
+    "use_highly_variable": true,
+    "categorical_covariate_keys": ["library_id"],
     "gaussian_sigma": 1.0
   }
 }

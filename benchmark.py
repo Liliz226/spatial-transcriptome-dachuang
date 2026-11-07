@@ -28,7 +28,7 @@ def load_and_prepare(ad_path, cfg):
 
     layer = cfg.get("layer")
     # Some notebooks put counts in X and copy it to a named layer.
-    if cfg.get("copy_x_to_layer"):
+    if cfg.get("copy_x_to_layer") and cfg["copy_x_to_layer"] not in adata.layers:
         adata.layers[cfg["copy_x_to_layer"]] = adata.X.copy()
         layer = cfg["copy_x_to_layer"]
 
@@ -36,7 +36,6 @@ def load_and_prepare(ad_path, cfg):
     if cfg.get("filter_genes_min_cells"):
         sctm.pp.filter_genes(adata, cfg["filter_genes_min_cells"], layer=layer)
     if cfg.get("filter_cells_min_genes"):
-        sq.gr.spatial_neighbors  # no-op guard, filtering below
         import scanpy as sc
         sc.pp.filter_cells(adata, min_genes=cfg["filter_cells_min_genes"])
 
@@ -81,6 +80,7 @@ def main():
             gene_likelihood="nb",
             spatial_weight=sw,
             spatial_weight_kwargs={"sigma": cfg.get("gaussian_sigma", 1.0)},
+            categorical_covariate_keys=cfg.get("categorical_covariate_keys"),
         )
         model.train(
             max_epochs=args.epochs,
